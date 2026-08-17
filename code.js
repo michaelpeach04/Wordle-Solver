@@ -308,7 +308,8 @@ onEvent("buttonContinue", "click", function( ) {
 /**
  * Filter words where letter is in confirmed position (Green button)
  * Keeps only words with the guessed letter at the correct position
- * OPTIMIZED: Early exit when filtering yields no results
+ * OPTIMIZED: Filters sequentially to avoid duplicate accumulation
+ * FIXED: Sequential filtering prevents duplicates when multiple green buttons are marked
  */
 function filterByGreen() {
   if (wordsList.length === 0) {
@@ -316,24 +317,27 @@ function filterByGreen() {
     return;
   }
   
-  var filteredWords = [];
+  // Process each position sequentially, filtering wordsList as we go
   for (var position = 1; position < 6; position++) {
     if (confirmedLetters[position - 1] !== 0) {
       var letter = getText("textLabel" + position);
       incrementLetterFrequency(letter);
       
+      var filteredWords = [];
       for (counter = wordsList.length - 1; counter > -1; counter--) {
         if (wordsList[counter].substring(position - 1, position) == letter.toLowerCase()) {
           appendItem(filteredWords, wordsList[counter]);
         }
       }
+      
+      if (filteredWords.length === 0) {
+        showErrorMessage("No words match the green letter at position " + position);
+        return;
+      }
+      
+      // Update wordsList immediately with filtered results
+      wordsList = filteredWords;
     }
-  }
-  
-  if (filteredWords.length === 0) {
-    showErrorMessage("No words match the green letter filter");
-  } else {
-    wordsList = filteredWords;
   }
 }
 
