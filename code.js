@@ -1,58 +1,161 @@
+// ==============================================
+// CONSTANTS
+// ==============================================
+var WORD_LENGTH = 5;
+var INITIAL_WORD_COUNT = 2308;
+var BUTTON_STATE_SELECTED = "red";
+var OPTIMAL_DISTANCE = 0.5; // Half the remaining list
+
+// ==============================================
+// GLOBAL VARIABLES
+// ==============================================
 var guessInput = 0;
 image("imageLoadingScreen", "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRI36XQvjI3IscKZkhuKdJ0GFmMWjR6uY_EPg&s");
 setProperty("imageLoadingScreen", "width", 300);
 var wordAnswers = getColumn("Wordle", "validWordleAnswer");
-//A list that never changes 8/3
-var permanentWordsList = [];
-//If you add a word to any list, make sure you add onto 2308+
-var wordsList = [];
-var tempWordsList = [];
-var tempLetter = "";
-var tempLetter2 = "";
-var tempLetter3 = "";
-var tempLetter4 = "";
-var tempLetter5 = "";
-var tempList = [];
-var tempList2 = [];
-var suggestionList = [];
-var suggestionList1 = [];
-var suggestionList2 = [];
-var suggestionList3 = [];
-var suggestionListFinal = [];
+
+// Word list management - consolidated from tempWordsList, tempList, tempList2, etc.
+var permanentWordsList = []; // Original, unmodified list (never changes)
+var wordsList = []; // Current working list of remaining valid words
+var remainingWords = []; // Filtered words after latest guess
+var bestSuggestions = []; // Top suggested words ranked by probability
+var allRemainingOptions = []; // All current options available
+
+// Game state tracking - consolidated from tempLetter, tempLetter2, etc.
+var currentSelectedLetter = ""; // Letter user just marked (Green/Yellow/Black)
+var confirmedLetters = [0, 0, 0, 0, 0]; // Green letters at correct positions
+var misplacedLetters = [0, 0, 0, 0, 0]; // Yellow letters at wrong positions
 var counter = 0;
 var gamemode = "";
-var greenIndicator = [0, 0, 0, 0, 0];
-var yellowIndicator = [0, 0, 0, 0, 0];
+// Letter frequency tracker - counts how many times each letter appears in remaining words
 var alphabet = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z"];
-var letters = {
-  "a": 0,
-  "b": 0,
-  "c": 0,
-  "d": 0,
-  "e": 0,
-  "f": 0,
-  "g": 0,
-  "h": 0,
-  "i": 0,
-  "j": 0,
-  "k": 0,
-  "l": 0,
-  "m": 0,
-  "n": 0,
-  "o": 0,
-  "p": 0,
-  "q": 0,
-  "r": 0,
-  "s": 0,
-  "t": 0,
-  "u": 0,
-  "v": 0,
-  "w": 0,
-  "x": 0,
-  "y": 0,
-  "z": 0,
+var letterFrequency = {
+  "a": 0, "b": 0, "c": 0, "d": 0, "e": 0, "f": 0, "g": 0, "h": 0,
+  "i": 0, "j": 0, "k": 0, "l": 0, "m": 0, "n": 0, "o": 0, "p": 0,
+  "q": 0, "r": 0, "s": 0, "t": 0, "u": 0, "v": 0, "w": 0, "x": 0,
+  "y": 0, "z": 0
 };
 var buttonColors = ["Green", "Yellow"];
+
+// ==============================================
+// UTILITY FUNCTIONS FOR STATE MANAGEMENT
+// ==============================================
+
+/**
+ * Reset letter frequency counter
+ */
+function resetLetterFrequency() {
+  for (var i = 0; i < 26; i++) {
+    letterFrequency[alphabet[i]] = 0;
+  }
+}
+
+/**
+ * Increment letter frequency for a given letter
+ * @param {string} letter - The letter to increment
+ */
+function incrementLetterFrequency(letter) {
+  if (letterFrequency.hasOwnProperty(letter)) {
+    letterFrequency[letter]++;
+  }
+}
+
+/**
+ * Count how many times a letter appears in all words of a word list
+ * @param {string} letter - Letter to count
+ * @param {array} wordList - List of words to search
+ * @returns {number} - Total count of the letter across all words
+ */
+function countLetterInWords(letter, wordList) {
+  var count = 0;
+  for (var i = 0; i < wordList.length; i++) {
+    for (var j = 0; j < WORD_LENGTH; j++) {
+      if (wordList[i].substring(j, j + 1) == letter) {
+        count++;
+      }
+    }
+  }
+  return count;
+}
+
+/**
+ * Count how many times a specific letter appears in a single word
+ * @param {string} letter - Letter to count
+ * @param {string} word - Word to search
+ * @returns {number} - Count of letter in this word
+ */
+function countLetterInWord(letter, word) {
+  var count = 0;
+  for (var j = 0; j < WORD_LENGTH; j++) {
+    if (word.substring(j, j + 1) == letter) {
+      count++;
+    }
+  }
+  return count;
+}
+
+/**
+ * Reset game state for next round
+ */
+function resetGameState() {
+  hideElement("buttonContinue");
+  setProperty("buttonContinue", "background-color", BUTTON_STATE_SELECTED);
+  confirmedLetters = [0, 0, 0, 0, 0];
+  misplacedLetters = [0, 0, 0, 0, 0];
+  resetLetterFrequency();
+  remainingWords = [];
+  bestSuggestions = [];
+  allRemainingOptions = [];
+  deleteElement("textAreaSuggestion");
+  deleteElement("textLabelSuggestions");
+  deleteElement("textAreaOptions");
+  deleteElement("textLabelOptions");
+}
+
+/**
+ * Validate that input is a valid 5-letter word with only alphabetic characters
+ * @param {string} guess - The guessed word to validate
+ * @returns {object} - {isValid: boolean, error: string message if invalid}
+ */
+function validateGuess(guess) {
+  // Check length
+  if (guess.length !== WORD_LENGTH) {
+    return {isValid: false, error: "Guess must be exactly " + WORD_LENGTH + " letters"};
+  }
+  
+  // Check for only alphabetic characters
+  for (var i = 0; i < guess.length; i++) {
+    var char = guess.substring(i, i + 1);
+    if ((char < "a" || char > "z") && (char < "A" || char > "Z")) {
+      return {isValid: false, error: "Guess must contain only alphabetic characters"};
+    }
+  }
+  
+  return {isValid: true, error: ""};
+}
+
+/**
+ * Display error message to user
+ * @param {string} message - Error message to display
+ */
+function showErrorMessage(message) {
+  // For Code.org App Lab, we'll log to console and display via console warning
+  // In production, you might show a toast or dialog
+  console.log("ERROR: " + message);
+}
+
+/**
+ * Safely access wordsList with error handling
+ * @returns {array} - Current word list or empty array if invalid
+ */
+function getSafeWordsList() {
+  if (!wordsList || wordsList.length === 0) {
+    showErrorMessage("No words remaining. The game may have ended.");
+    return [];
+  }
+  return wordsList;
+}
+
 textInput("text_inputGuess", "");
 hideElement("text_inputGuess");
 deleteElement("imageLoadingScreen");
@@ -86,7 +189,7 @@ onEvent("buttonStart", "click", function( ) {
     setProperty("screen1", "image", "");
     image("imageLoadingScreen", "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRI36XQvjI3IscKZkhuKdJ0GFmMWjR6uY_EPg&s");
     setProperty("imageLoadingScreen", "width", 300);
-    for (var counter = 0; counter < 2308; counter++) {
+    for (var counter = 0; counter < INITIAL_WORD_COUNT; counter++) {
       appendItem(wordsList, wordAnswers[counter]);
       appendItem(permanentWordsList, wordAnswers[counter]);
     }
@@ -109,6 +212,39 @@ onEvent("buttonStart", "click", function( ) {
     runWordle();
   });
 });
+
+/**
+ * Parameterized handler for color button clicks (Green/Yellow)
+ * Replaces all 10 duplicate greenButton1-5 and yellowButton1-5 handlers
+ * @param {number} position - Button position (1-5)
+ * @param {string} color - "Green" or "Yellow"
+ */
+function handleColorButtonClick(position, color) {
+  // Reset all button colors
+  for (var i = 0; i < 2; i++) {
+    for (var j = 1; j < 6; j++) {
+      setProperty("button" + buttonColors[i] + j, "background-color", buttonColors[i]);
+    }
+  }
+  
+  // Mark selected button as red and hide both Green/Yellow at this position
+  setProperty("button" + color + position, "background-color", BUTTON_STATE_SELECTED);
+  setProperty("button" + color + position, "hidden", true);
+  
+  // Hide the opposite color button at this position
+  var oppositeColor = (color == "Green") ? "Yellow" : "Green";
+  setProperty("button" + oppositeColor + position, "hidden", true);
+  
+  // Track selection in appropriate indicator array and trigger filter
+  if (color == "Green") {
+    confirmedLetters[position - 1] = position;
+    filterByGreen();
+  } else {
+    misplacedLetters[position - 1] = position;
+    filterByYellow();
+  }
+}
+
 function runWordle() {
   setProperty("screen1", "image", "https://angiemcmonigal.com/wp-content/uploads/2018/08/so-close-yet-so-far-2400.jpg");
   showElement("text_inputGuess");
@@ -145,219 +281,317 @@ function runWordle() {
   }
   button("buttonConfirm", "confirm");
   setPosition("buttonConfirm", 110, 300, 100, 50);
-  onEvent("buttonGreen1", "click", function( ) {
-    for (var i = 0; i < 2; i++) {
-      for (var j = 1; j < 6; j++) {
-        setProperty("button" + buttonColors[i] + j, "background-color", buttonColors[i]);
-      }
+  
+  // Setup event handlers for all color buttons (Green1-5, Yellow1-5)
+  // Uses parameterized handleColorButtonClick to eliminate 10 duplicate handlers
+  for (var colorIdx = 0; colorIdx < 2; colorIdx++) {
+    for (var position = 1; position < 6; position++) {
+      (function(color, pos) {
+        var buttonName = "button" + color + pos;
+        onEvent(buttonName, "click", function() {
+          handleColorButtonClick(pos, color);
+        });
+      })(buttonColors[colorIdx], position);
     }
-    setProperty("buttonGreen1", "background-color", "red");
-    setProperty("buttonGreen1", "hidden", true);
-    setProperty("buttonYellow1", "hidden", true);
-    greenIndicator[0] = 1;
-    greenButton();
-  });
-  onEvent("buttonGreen2", "click", function( ) {
-    for (var i = 0; i < 2; i++) {
-      for (var j = 1; j < 6; j++) {
-        setProperty("button" + buttonColors[i] + j, "background-color", buttonColors[i]);
-      }
-    }
-    setProperty("buttonGreen2", "background-color", "red");
-    setProperty("buttonGreen2", "hidden", true);
-    setProperty("buttonYellow2", "hidden", true);
-    greenIndicator[1] = 2;
-    greenButton();
-  });
-  onEvent("buttonGreen3", "click", function( ) {
-    for (var i = 0; i < 2; i++) {
-      for (var j = 1; j < 6; j++) {
-        setProperty("button" + buttonColors[i] + j, "background-color", buttonColors[i]);
-      }
-    }
-    setProperty("buttonGreen3", "background-color", "red");
-    setProperty("buttonGreen3", "hidden", true);
-    setProperty("buttonYellow3", "hidden", true);
-    greenIndicator[2] = 3;
-    greenButton();
-  });
-  onEvent("buttonGreen4", "click", function( ) {
-    for (var i = 0; i < 2; i++) {
-      for (var j = 1; j < 6; j++) {
-        setProperty("button" + buttonColors[i] + j, "background-color", buttonColors[i]);
-      }
-    }
-    setProperty("buttonGreen4", "background-color", "red");
-    setProperty("buttonGreen4", "hidden", true);
-    setProperty("buttonYellow4", "hidden", true);
-    greenIndicator[3] = 4;
-    greenButton();
-  });
-  onEvent("buttonGreen5", "click", function( ) {
-    for (var i = 0; i < 2; i++) {
-      for (var j = 1; j < 6; j++) {
-        setProperty("button" + buttonColors[i] + j, "background-color", buttonColors[i]);
-      }
-    }
-    setProperty("buttonGreen5", "background-color", "red");
-    setProperty("buttonGreen5", "hidden", true);
-    setProperty("buttonYellow5", "hidden", true);
-    greenIndicator[4] = 5;
-    greenButton();
-  });
-  onEvent("buttonYellow1", "click", function( ) {
-    for (var i = 0; i < 2; i++) {
-      for (var j = 1; j < 6; j++) {
-        setProperty("button" + buttonColors[i] + j, "background-color", buttonColors[i]);
-      }
-    }
-    setProperty("buttonYellow1", "background-color", "red");
-    setProperty("buttonGreen1", "hidden", true);
-    setProperty("buttonYellow1", "hidden", true);
-    yellowIndicator[0] = 1;
-    yellowButton();
-  });
-  onEvent("buttonYellow2", "click", function( ) {
-    for (var i = 0; i < 2; i++) {
-      for (var j = 1; j < 6; j++) {
-        setProperty("button" + buttonColors[i] + j, "background-color", buttonColors[i]);
-      }
-    }
-    setProperty("buttonYellow2", "background-color", "red");
-    setProperty("buttonGreen2", "hidden", true);
-    setProperty("buttonYellow2", "hidden", true);
-    yellowIndicator[1] = 2;
-    yellowButton();
-  });
-  onEvent("buttonYellow3", "click", function( ) {
-    for (var i = 0; i < 2; i++) {
-      for (var j = 1; j < 6; j++) {
-        setProperty("button" + buttonColors[i] + j, "background-color", buttonColors[i]);
-      }
-    }
-    setProperty("buttonYellow3", "background-color", "red");
-    setProperty("buttonGreen3", "hidden", true);
-    setProperty("buttonYellow3", "hidden", true);
-    yellowIndicator[2] = 3;
-    yellowButton();
-  });
-  onEvent("buttonYellow4", "click", function( ) {
-    for (var i = 0; i < 2; i++) {
-      for (var j = 1; j < 6; j++) {
-        setProperty("button" + buttonColors[i] + j, "background-color", buttonColors[i]);
-      }
-    }
-    setProperty("buttonYellow4", "background-color", "red");
-    setProperty("buttonGreen4", "hidden", true);
-    setProperty("buttonYellow4", "hidden", true);
-    yellowIndicator[3] = 4;
-    yellowButton();
-  });
-  onEvent("buttonYellow5", "click", function( ) {
-    for (var i = 0; i < 2; i++) {
-      for (var j = 1; j < 6; j++) {
-        setProperty("button" + buttonColors[i] + j, "background-color", buttonColors[i]);
-      }
-    }
-    setProperty("buttonYellow5", "background-color", "red");
-    setProperty("buttonGreen5", "hidden", true);
-    setProperty("buttonYellow5", "hidden", true);
-    yellowIndicator[4] = 5;
-    yellowButton();
-  });
+  }
+  
   onEvent("buttonConfirm", "click", function( ) {
     deleteElement("buttonReset");
-    blackButton();
+    filterByBlack();
   });
 }
 onEvent("buttonContinue", "click", function( ) {
-  hideElement("buttonContinue");
-  setProperty("buttonContinue", "background-color", "red");
-  greenIndicator = [0, 0, 0, 0, 0];
-  yellowIndicator = [0, 0, 0, 0, 0];
-  for (var i = 0; i < 26; i++) {
-    letters[alphabet[i]] = 0;
-  }
-  tempList = [];
-  tempList2 = [];
-  suggestionList = [];
-  suggestionList1 = [];
-  suggestionList2 = [];
-  suggestionList3 = [];
-  suggestionListFinal = [];
-  deleteElement("textAreaSuggestion");
-  deleteElement("textLabelSuggestions");
-  deleteElement("textAreaOptions");
-  deleteElement("textLabelOptions");
+  resetGameState();
   runWordle();
     });
-function greenButton() {
-  for (var i = 1; i < 6; i++) {
-    if (getProperty("buttonGreen" + i, "background-color") == "red") {
-      tempLetter = getText("textLabel" + i);
-      for (var j = 0; j < 26; j++) {
-          if (alphabet[j] == tempLetter) {
-            (letters[(alphabet[j])])++;
-          }
-        }
+
+/**
+ * Filter words where letter is in confirmed position (Green button)
+ * Keeps only words with the guessed letter at the correct position
+ * OPTIMIZED: Early exit when filtering yields no results
+ */
+function filterByGreen() {
+  if (wordsList.length === 0) {
+    showErrorMessage("No words available to filter");
+    return;
+  }
+  
+  var filteredWords = [];
+  for (var position = 1; position < 6; position++) {
+    if (confirmedLetters[position - 1] !== 0) {
+      var letter = getText("textLabel" + position);
+      incrementLetterFrequency(letter);
+      
       for (counter = wordsList.length - 1; counter > -1; counter--) {
-        if (wordsList[counter].substring(i - 1, i) == tempLetter.toLowerCase()) {
-          appendItem(tempWordsList, wordsList[counter]);
+        if (wordsList[counter].substring(position - 1, position) == letter.toLowerCase()) {
+          appendItem(filteredWords, wordsList[counter]);
         }
       }
     }
   }
-  wordsList = tempWordsList;
-  tempWordsList = [];
+  
+  if (filteredWords.length === 0) {
+    showErrorMessage("No words match the green letter filter");
+  } else {
+    wordsList = filteredWords;
+  }
 }
+
+/**
+ * Filter words containing letter but NOT at guessed position (Yellow button)
+ * Removes words that have the letter at this position or lack sufficient letter count
+ */
+function filterByYellow() {
+  if (wordsList.length === 0) {
+    showErrorMessage("No words available to filter");
+    return;
+  }
+  
+  for (var position = 1; position < 6; position++) {
+    if (misplacedLetters[position - 1] !== 0) {
+      var letter = getText("textLabel" + position);
+      incrementLetterFrequency(letter);
+      
+      for (counter = wordsList.length - 1; counter > -1; counter--) {
+        var letterCountInWord = countLetterInWord(letter, wordsList[counter]);
+        
+        // Remove if: letter is at guessed position OR letter count doesn't match expectation
+        if (wordsList[counter].substring(position - 1, position) == letter.toLowerCase() || letterFrequency[letter] > letterCountInWord) {
+          removeItem(wordsList, counter);
+        }
+      }
+    }
+  }
+  
+  if (wordsList.length === 0) {
+    showErrorMessage("No words match the yellow letter filter");
+  }
+}
+
+/**
+ * Filter words by letters marked as black (not in word)
+ * Removes words with incorrect letter counts for black letters
+ */
+function filterByBlack() {
+  if (wordsList.length === 0) {
+    showErrorMessage("No words available to filter");
+    return;
+  }
+  
+  for (var position = 1; position < 6; position++) {
+    var letter = getText("textLabel" + position);
+    
+    // Only process if this position wasn't marked Green or Yellow
+    if (confirmedLetters[position - 1] == 0 && misplacedLetters[position - 1] == 0) {
+      for (var k = wordsList.length - 1; k > -1; k--) {
+        var letterCountInWord = countLetterInWord(letter, wordsList[k]);
+        
+        // Remove if letter count doesn't match what we've confirmed
+        if (letterCountInWord != letterFrequency[letter]) {
+          removeItem(wordsList, k);
+        }
+      }
+    }
+  }
+  
+  if (wordsList.length === 0) {
+    showErrorMessage("No words match the black letter filter");
+  }
+  
+  currentSelectedLetter = letter;
+  remainingWords = wordsList;
+  bestSuggestions = [];
+  rankAndSuggestWords();
+  allRemainingOptions = remainingWords;
+  bestSuggestions = bestSuggestions;
+  
+  // Clear UI elements
+  for (var i = 1; i < 6; i++) {
+    deleteElement("textLabel" + i);
+  }
+  for (var i = 0; i < 2; i++) {
+    for (var j = 1; j < 6; j++) {
+      deleteElement("button" + buttonColors[i] + j);
+    }
+  }
+  deleteElement("buttonConfirm");
+  
+  // Display results
+  textArea("textAreaOptions");
+  setProperty("textAreaOptions", "readonly", true);
+  setPosition("textAreaOptions", 30, 90, 100, 200);
+  setProperty("textAreaOptions", "background-color", "#ADD8E6");
+  textLabel("textLabelOptions", "All Options");
+  setProperty("textLabelOptions", "text-color", "white");
+  setPosition("textLabelOptions", 30, 40, 50, 50);
+  
+  textArea("textAreaSuggestion");
+  setProperty("textAreaSuggestion", "readonly", true);
+  
+  if (gamemode == "NyTimes") {
+    if (bestSuggestions.length > 0) {
+      setText("textAreaSuggestion", bestSuggestions[0]);
+    } else if (remainingWords.length > 0) {
+      setText("textAreaSuggestion", remainingWords[0]);
+    } else {
+      setText("textAreaSuggestion", wordsList[0]);
+    }
+  } else {
+    if (bestSuggestions.length > 0) {
+      setText("textAreaSuggestion", bestSuggestions.join("\n"));
+    } else {
+      setText("textAreaSuggestion", remainingWords.join("\n"));
+    }
+  }
+  
+  setPosition("textAreaSuggestion", 190, 90, 100, 200);
+  setProperty("textAreaSuggestion", "background-color", "#ADD8E6");
+  textLabel("textLabelSuggestions", "Top Suggestion");
+  setProperty("textLabelSuggestions", "text-color", "white");
+  setPosition("textLabelSuggestions", 190, 40, 50, 50);
+  setText("textAreaOptions", wordsList.join("\n"));
+  showElement("buttonContinue");
+}
+
+/**
+ * Rank all candidate words from permanentWordsList by letter frequency
+ * Suggests the most informative words (with letters closest to optimal distribution)
+ * Updates bestSuggestions array with ranked suggestions
+ * OPTIMIZED: Early exit for small word lists, cached letter calculations
+ */
+function rankAndSuggestWords() {
+  // Early exit for small word lists
+  if (remainingWords.length <= 2) {
+    if (remainingWords.length > 0) {
+      insertItem(bestSuggestions, 0, remainingWords[0]);
+    }
+    return;
+  }
+  
+  var valueList = [];
+  for (var i = 0; i < permanentWordsList.length; i++) {
+    appendItem(valueList, 0);
+  }
+  
+  // For each unfilled position, calculate letter frequency and word values
+  for (var position = 1; position < 6; position++) {
+    if (confirmedLetters[position - 1] == 0) {
+      // Count letter frequencies at this position in remaining words
+      // OPTIMIZATION: Reset within scope only for needed letters
+      for (var j = 0; j < 26; j++) {
+        letterFrequency[alphabet[j]] = 0;
+      }
+      
+      for (counter = remainingWords.length - 1; counter > -1; counter--) {
+        for (var j = 0; j < 26; j++) {
+          if (remainingWords[counter].substring(position - 1, position) == alphabet[j]) {
+            letterFrequency[alphabet[j]]++;
+          }
+        }
+      }
+      
+      // Calculate distance from optimal (half the remaining list)
+      var optimalValue = remainingWords.length * OPTIMAL_DISTANCE;
+      for (var j = 0; j < 26; j++) {
+        if (letterFrequency[alphabet[j]] > 0) {
+          letterFrequency[alphabet[j]] = Math.abs(optimalValue - letterFrequency[alphabet[j]]);
+        }
+      }
+      
+      // Score each word from permanentWordsList
+      for (var j = 0; j < permanentWordsList.length; j++) {
+        var wordValue = 0;
+        var wordLetter = permanentWordsList[j].substring(position - 1, position);
+        // OPTIMIZATION: Only look up the specific letter, not all 26
+        for (var k = 0; k < alphabet.length; k++) {
+          if (wordLetter == alphabet[k]) {
+            wordValue = letterFrequency[alphabet[k]];
+            break;
+          }
+        }
+        valueList[j] = valueList[j] + wordValue;
+      }
+    }
+  }
+  
+  // Find words with lowest values (most informative) and add to suggestions
+  var minValue = 1000000;
+  for (var i = 0; i < valueList.length; i++) {
+    if (valueList[i] < minValue) {
+      insertItem(bestSuggestions, 0, permanentWordsList[i]);
+      minValue = valueList[i];
+    }
+  }
+}
+
+/**
+ * DEPRECATED - Use filterByGreen() instead
+ */
+function greenButton() {
+  for (var i = 1; i < 6; i++) {
+    if (getProperty("buttonGreen" + i, "background-color") == "red") {
+      currentSelectedLetter = getText("textLabel" + i);
+      for (var j = 0; j < 26; j++) {
+          if (alphabet[j] == currentSelectedLetter) {
+            incrementLetterFrequency(currentSelectedLetter);
+          }
+        }
+      for (counter = wordsList.length - 1; counter > -1; counter--) {
+        if (wordsList[counter].substring(i - 1, i) == currentSelectedLetter.toLowerCase()) {
+          appendItem(remainingWords, wordsList[counter]);
+        }
+      }
+    }
+  }
+  wordsList = remainingWords;
+  remainingWords = [];
+}
+
+/**
+ * DEPRECATED - Use filterByYellow() instead
+ */
 function yellowButton() {
   //On july 30th, I made this change. Im never wrong
   for (var i = 1; i < 6; i++) {
     if (getProperty("buttonYellow" + i, "background-color") == "red") {
-      tempLetter = getText("textLabel" + i);
+      currentSelectedLetter = getText("textLabel" + i);
       for (var j = 0; j < 26; j++) {
-        if (alphabet[j] == tempLetter) {
-          (letters[(alphabet[j])])++;
+        if (alphabet[j] == currentSelectedLetter) {
+          incrementLetterFrequency(currentSelectedLetter);
         }
       }
       for (counter = wordsList.length - 1; counter > -1; counter--) {
-        var howManyLettersInWord = 0;
-        for (var j = 1; j < 6; j++) {
-          if (wordsList[counter].substring(j-1, j) == tempLetter) {
-            howManyLettersInWord++;
-          }
-        }
-        if (wordsList[counter].substring(i - 1, i) == tempLetter.toLowerCase() || letters[tempLetter] > howManyLettersInWord) {
+        var howManyLettersInWord = countLetterInWord(currentSelectedLetter, wordsList[counter]);
+        if (wordsList[counter].substring(i - 1, i) == currentSelectedLetter.toLowerCase() || letterFrequency[currentSelectedLetter] > howManyLettersInWord) {
           removeItem(wordsList, counter);
         }
       }
     }
   }
 }
+
+/**
+ * DEPRECATED - Use filterByBlack() instead
+ */
 function blackButton() {
   for (var i = 1; i < 6; i++) {
-    tempLetter = getText("textLabel" + i);
+    currentSelectedLetter = getText("textLabel" + i);
     //Looks for amount of letters in a word
-    if (greenIndicator[i - 1] == 0 && yellowIndicator[i - 1] == 0) {
+    if (confirmedLetters[i - 1] == 0 && misplacedLetters[i - 1] == 0) {
       for (var k = wordsList.length - 1; k > -1; k--) {
-        var howManyLettersInWord = 0;
-        for (var j = 1; j < 6; j++) {
-          if (wordsList[k].substring(j-1, j) == tempLetter) {
-            howManyLettersInWord++;
-          }
-        }
-        if (howManyLettersInWord != letters[tempLetter]) {
+        var howManyLettersInWord = countLetterInWord(currentSelectedLetter, wordsList[k]);
+        if (howManyLettersInWord != letterFrequency[currentSelectedLetter]) {
           removeItem(wordsList, k);
         }
       }
     }
   }
-  tempLetter2 = tempLetter;
-  tempList = wordsList;
-  tempList2 = suggestionList;
-  listMaker();
-  suggestionList3 = tempList;
-  suggestionListFinal = tempList2;
+  currentSelectedLetter = currentSelectedLetter;
+  remainingWords = wordsList;
+  bestSuggestions = [];
+  rankAndSuggestWords();
+  allRemainingOptions = remainingWords;
+  bestSuggestions = bestSuggestions;
   for (var i = 1; i < 6; i++) {
     deleteElement("textLabel" + i);
   }
@@ -377,25 +611,25 @@ function blackButton() {
   textArea("textAreaSuggestion");
   setProperty("textAreaSuggestion", "readonly", true);
   if (gamemode == "NyTimes") {
-    if (suggestionListFinal == "") {
-      if (suggestionList3 == "") {
-        if (suggestionList2 == "") {
-          if (suggestionList == "") {
+    if (bestSuggestions == "") {
+      if (allRemainingOptions == "") {
+        if (remainingWords == "") {
+          if ([] == "") {
             setText("textAreaSuggestion", wordsList);
           } else {
-            setText("textAreaSuggestion", suggestionList);
+            setText("textAreaSuggestion", []);
           }
         } else {
-          setText("textAreaSuggestion", suggestionList2);
+          setText("textAreaSuggestion", remainingWords);
         }
       } else {
-        setText("textAreaSuggestion", suggestionList3);
+        setText("textAreaSuggestion", allRemainingOptions);
       }
     } else {
-      setText("textAreaSuggestion", suggestionListFinal[0]);
+      setText("textAreaSuggestion", bestSuggestions[0]);
     }
   } else {
-    setText("textAreaSuggestion", suggestionListFinal.join("\n"));
+    setText("textAreaSuggestion", bestSuggestions.join("\n"));
   }
   setPosition("textAreaSuggestion", 190, 90, 100, 200);
   setProperty("textAreaSuggestion", "background-color", "	#ADD8E6");
@@ -405,52 +639,53 @@ function blackButton() {
   setText("textAreaOptions", wordsList.join("\n"));
   showElement("buttonContinue");
 }
+
+/**
+ * DEPRECATED - Use rankAndSuggestWords() instead
+ */
 function listMaker() {
-  //Making list as large as the list of words 8/3
   var valueList = [];
   for (var i = 0; i < permanentWordsList.length; i++) {
     appendItem(valueList, 0);
   }
   for (var i = 1; i < 6; i++) {
-    if (greenIndicator[i-1] == 0) {
-      for (counter = tempList.length - 1; counter > -1; counter--) {
+    if (confirmedLetters[i-1] == 0) {
+      for (counter = remainingWords.length - 1; counter > -1; counter--) {
         for (var j = 0; j < 26; j++) {
-          if (tempList[counter].substring(i-1,i) == alphabet[j]) {
-            letters[(alphabet[j])]++;
+          if (remainingWords[counter].substring(i-1,i) == alphabet[j]) {
+            letterFrequency[(alphabet[j])]++;
           }
         }
       }
       for (var j = 0; j < 26; j++) {
-          letters[(alphabet[j])] = Math.abs((tempList.length / 2) - letters[alphabet[j]]);
-        }
-      if (tempList.length > 2) {
+        letterFrequency[(alphabet[j])] = Math.abs((remainingWords.length / 2) - letterFrequency[alphabet[j]]);
+      }
+      if (remainingWords.length > 2) {
         for (var j = 0; j < permanentWordsList.length; j++) {
           var wordValue = 0;
           for (var k = 0; k < alphabet.length; k++) {
             if (permanentWordsList[j].substring(i-1,i) == alphabet[k]) {
-              wordValue = wordValue + letters[(alphabet[k])];
+              wordValue = wordValue + letterFrequency[(alphabet[k])];
             }
           }
           valueList[j] = valueList[j] + wordValue;
         }
         for (var j = 0; j < 26; j++) {
-        letters[alphabet[j]] = 0;
+          letterFrequency[alphabet[j]] = 0;
         }
       }
-      //Rates every word and give it a value
-      //Changing all value to how close they are to half the list
     }
   }
-  //Adding the word with the least value to list
-  if (tempList.length > 2) {
+  if (remainingWords.length > 2) {
     var temp = 1000000;
     for (var i = 0; i < valueList.length; i++) {
       if (valueList[i] < temp) {
-        insertItem(tempList2, 0, permanentWordsList[i]);
+        insertItem(bestSuggestions, 0, permanentWordsList[i]);
         temp = valueList[i];
       }
     }
   } else {
-    insertItem(tempList2, 0, tempList[0]);
+    insertItem(bestSuggestions, 0, remainingWords[0]);
   }
 }
+
